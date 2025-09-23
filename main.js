@@ -1,357 +1,486 @@
-window.addEventListener('error', e => {
-  console.error('[Global error]', e.message, e.error);
-});
-window.addEventListener('unhandledrejection', e => {
-  console.error('[Unhandled promise rejection]', e.reason);
-});
-console.log('[main] script start');
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.module.js';
+import WindowManager from './WindowManager.js';
 
-/* ========== Imports (CDN) ========== */
-import * as THREE from "https://unpkg.com/three@0.180.0/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.180.0/examples/jsm/controls/OrbitControls.js";
-import { RGBELoader } from "https://unpkg.com/three@0.180.0/examples/jsm/loaders/RGBELoader.js";
-import { EffectComposer } from "https://unpkg.com/three@0.180.0/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "https://unpkg.com/three@0.180.0/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "https://unpkg.com/three@0.180.0/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { SSAOPass } from "https://unpkg.com/three@0.180.0/examples/jsm/postprocessing/SSAOPass.js";
-import { SMAAPass } from "https://unpkg.com/three@0.180.0/examples/jsm/postprocessing/SMAAPass.js";
-import WindowManager from "./WindowManager.js";
+let camera, scene, renderer, world;
+let nebulaBalls = [];
+let sceneOffsetTarget = {x: 0, y: 0};
+let sceneOffset = {x: 0, y: 0};
 
-/* ========== Config & globals ========== */
-const DPR = Math.min(window.devicePixelRatio || 1, 2);
-let renderer, scene, camera, controls, world;
-let composer = null;
-let windowManager = null;
-let objects = [];
-let sceneOffset = { x: 0, y: 0 }, sceneOffsetTarget = { x: 0, y: 0 };
+// Advanced effects variables
+let particleSystems = [];
+let connectionLines = [];
+let audioContext, analyser;
+let gravityPoints = [];
+let mousePosition = { x: 0, y: 0 };
+let timeUniform = { value: 0 };
+
+let today = new Date();
+today.setHours(0);
+today.setMinutes(0);
+today.setSeconds(0);
+today.setMilliseconds(0);
+today = today.getTime();
+
+let windowManager;
 let initialized = false;
 
-/* small helpers */
-const lerp = (a,b,t) => a + (b - a) * t;
-function nowSeconds() {
-  const d = new Date(); d.setHours(0,0,0,0); return (Date.now() - d.getTime()) / 1000;
+function getTime() {
+    return (new Date().getTime() - today) / 1000.0;
 }
 
-/* ========== Bootstrapping - ensure document.body exists ========== */
-function safeAppendCanvas(domElement) {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => document.body.appendChild(domElement));
-  } else {
-    document.body.appendChild(domElement);
-  }
-}
+if (new URLSearchParams(window.location.search).get("clear")) {
+    localStorage.clear();
+} else {    
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState != 'hidden' && !initialized) {
+            init();
+        }
+    });
 
-/* ========== Init (public) ========== */
-init();
-
-async function init() {
-  if (initialized) return;
-  initialized = true;
-  console.log('[main] init');
-
-  try {
-    setupRenderer();
-    setupSceneAndCamera();
-    setupLightsAndGround();
-  } catch (e) {
-    console.error('[main] fatal during setup:', e);
-    // If we can't even create the renderer/camera, bail early
-    return;
-  }
-
-  // Try to load HDRI environment (non-blocking fallback)
-  try {
-    await tryLoadHDRI('/assets/hdr/studio_small_01_1k.hdr');
-    console.log('[main] HDR load attempt finished');
-  } catch (e) {
-    console.warn('[main] HDR load failed (continuing with fallback):', e);
-  }
-
-  // WindowManager (guarded)
-  try {
-    windowManager = new WindowManager();
-    windowManager.setWinShapeChangeCallback(onWindowShapeChange);
-    windowManager.setWinChangeCallback(onWindowsChanged);
-    windowManager.init({ realistic: true });
-  } catch (e) {
-    console.warn('[main] WindowManager failed, falling back to single-window mode:', e);
-    windowManager = {
-      getWindows: () => [{ id: 1, shape: { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight } }],
-      update: () => {},
-      setWinShapeChangeCallback: () => {},
-      setWinChangeCallback: () => {},
+    window.onload = () => {
+        if (document.visibilityState != 'hidden') {
+            init();
+        }
     };
-  }
 
-  // Postprocessing - create but tolerate failures
-  try {
-    setupPostProcessing();
-  } catch (e) {
-    console.warn('[main] postprocessing setup failed (fallback to raw renderer):', e);
-    composer = null;
-  }
-
-  // create our objects for windows
-  onWindowsChanged();
-
-  // final sizing + listeners
-  onResize();
-  window.addEventListener('resize', onResize);
-
-  // start loop
-  requestAnimationFrame(loop);
-}
-
-/* ========== Renderer, scene, camera ========== */
-function setupRenderer() {
-  renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(DPR);
-  renderer.outputEncoding = THREE.sRGBEncoding;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.domElement.id = 'three-canvas';
-  safeAppendCanvas(renderer.domElement);
-  console.log('[main] renderer created');
-}
-
-function setupSceneAndCamera() {
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b0b0d);
-
-  const w = window.innerWidth, h = window.innerHeight;
-  camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 2000);
-  camera.position.set(0, 2, 6);
-
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.minDistance = 1;
-  controls.maxDistance = 40;
-  controls.maxPolarAngle = Math.PI * 0.49;
-
-  world = new THREE.Object3D();
-  scene.add(world);
-
-  console.log('[main] scene & camera set up');
-}
-
-/* ========== Lighting & ground ========== */
-function setupLightsAndGround() {
-  // key light
-  const key = new THREE.DirectionalLight(0xffffff, 2.0);
-  key.position.set(6, 8, 6);
-  key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
-  key.shadow.radius = 6;
-  key.shadow.camera.left = -10; key.shadow.camera.right = 10;
-  key.shadow.camera.top = 10; key.shadow.camera.bottom = -10;
-  scene.add(key);
-
-  // fill
-  const hemi = new THREE.HemisphereLight(0xbfbfbf, 0x222222, 0.6);
-  scene.add(hemi);
-
-  // rim
-  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
-  rim.position.set(-6, 6, -4);
-  scene.add(rim);
-
-  // ground
-  const groundMat = new THREE.MeshPhysicalMaterial({
-    color: 0x0f0f10, metalness: 0.0, roughness: 0.6, reflectivity: 0.2
-  });
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), groundMat);
-  ground.rotation.x = -Math.PI/2;
-  ground.position.y = -1.05;
-  ground.receiveShadow = true;
-  scene.add(ground);
-
-  console.log('[main] lights and ground created');
-}
-
-/* ========== HDRI load (non-fatal) ========== */
-async function tryLoadHDRI(hdrPath) {
-  if (!RGBELoader) {
-    console.warn('[main] RGBELoader not available');
-    return;
-  }
-  console.log('[main] attempting HDRI load:', hdrPath);
-  const pmremGen = new THREE.PMREMGenerator(renderer);
-  pmremGen.compileEquirectangularShader();
-
-  return new Promise((resolve, reject) => {
-    const loader = new RGBELoader();
-    loader.setDataType(THREE.UnsignedByteType);
-
-    loader.load(hdrPath, (tex) => {
-      try {
-        const env = pmremGen.fromEquirectangular(tex).texture;
-        scene.environment = env;
-        // do not set background to env by default (can be heavy)
-        tex.dispose();
-        pmremGen.dispose();
-        console.log('[main] HDRI applied to scene.environment');
-        resolve(true);
-      } catch (err) {
-        console.warn('[main] HDR processing failed:', err);
-        try { tex.dispose(); } catch(e){}
-        try { pmremGen.dispose(); } catch(e){}
-        reject(err);
-      }
-    }, undefined, err => {
-      console.warn('[main] HDRI load failed (network or path):', err);
-      try { pmremGen.dispose(); } catch(e){}
-      reject(err);
-    });
-  });
-}
-
-/* ========== Postprocessing (try/catch tolerant) ========== */
-function setupPostProcessing() {
-  composer = new EffectComposer(renderer);
-  composer.setSize(window.innerWidth, window.innerHeight);
-
-  const rp = new RenderPass(scene, camera);
-  composer.addPass(rp);
-
-  // SSAO (if available)
-  try {
-    const ssao = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
-    ssao.kernelRadius = 16;
-    ssao.minDistance = 0.001;
-    ssao.maxDistance = 0.1;
-    composer.addPass(ssao);
-    console.log('[main] SSAO pass added');
-  } catch (e) {
-    console.warn('[main] SSAOPass failed to initialize:', e);
-  }
-
-  // Bloom
-  try {
-    const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.35, 0.5, 0.85);
-    bloom.threshold = 0.9; bloom.strength = 0.2;
-    composer.addPass(bloom);
-    console.log('[main] Bloom pass added');
-  } catch (e) {
-    console.warn('[main] UnrealBloomPass failed:', e);
-  }
-
-  // SMAA antialiasing (optional)
-  try {
-    const smaa = new SMAAPass(window.innerWidth * DPR, window.innerHeight * DPR);
-    composer.addPass(smaa);
-    console.log('[main] SMAA pass added');
-  } catch (e) {
-    console.warn('[main] SMAAPass failed or not supported:', e);
-  }
-}
-
-/* ========== Windows -> scene objects mapping ========== */
-function onWindowsChanged() {
-  console.log('[main] windows changed: rebuilding objects');
-  // clear
-  objects.forEach(o => {
-    try { world.remove(o.group); } catch(e){}
-  });
-  objects = [];
-
-  const wins = (windowManager && windowManager.getWindows) ? (windowManager.getWindows() || []) : [{ id:1, shape: { x:0,y:0,w:window.innerWidth,h:window.innerHeight}}];
-
-  // create a modern object per-window
-  wins.forEach((win, idx) => {
-    const scale = 0.8 + idx * 0.12;
-    const group = new THREE.Object3D();
-
-    // main body
-    const geom = new THREE.BoxGeometry(scale, scale * 0.7, scale * 0.6, 8,8,8);
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color().setHSL((idx*0.08) % 1, 0.6, 0.5),
-      metalness: 0.05, roughness: 0.45, clearcoat: 0.07
-    });
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.castShadow = true;
-    mesh.position.y = 0;
-    group.add(mesh);
-
-    // base / pedestal
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(scale*0.45, scale*0.5, 0.12, 28),
-      new THREE.MeshPhysicalMaterial({ color:0x0b0b0d, roughness:0.6 }));
-    base.position.y = - (scale*0.35) - 0.06;
-    base.receiveShadow = true;
-    group.add(base);
-
-    // contact shadow plane
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(scale * 1.6, scale * 1.0),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 }));
-    shadow.rotation.x = -Math.PI/2;
-    shadow.position.y = - (scale*0.7) - 0.02;
-    group.add(shadow);
-
-    // initial layout - we space them across X axis (visual layout independent of window positions)
-    group.position.set((idx - wins.length/2) * 1.6, 0, 0);
-
-    world.add(group);
-    objects.push({ id: win.id, group, shadow });
-  });
-
-  console.log('[main] created', objects.length, 'objects');
-}
-
-/* ========== Window shape -> scene offset (parallax) ========== */
-function onWindowShapeChange() {
-  const sx = (typeof window.screenX === 'number') ? window.screenX : window.screenLeft;
-  const sy = (typeof window.screenY === 'number') ? window.screenY : window.screenTop;
-  // very small parallax factor so subtle motion if windows move
-  sceneOffsetTarget.x = -sx * 0.01;
-  sceneOffsetTarget.y = -sy * 0.01;
-}
-
-/* ========== Main loop ========== */
-function loop() {
-  try {
-    requestAnimationFrame(loop);
-
-    if (windowManager && typeof windowManager.update === 'function') {
-      try { windowManager.update(); } catch (e) { /* swallow */ }
+    function init() {
+        initialized = true;
+        setTimeout(() => {
+            setupScene();
+            setupWindowManager();
+            resize();
+            updateWindowShape(false);
+            render();
+            window.addEventListener('resize', resize);
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('click', onMouseClick);
+        }, 500);
     }
 
-    // lerp world offset
-    sceneOffset.x = lerp(sceneOffset.x, sceneOffsetTarget.x, 0.06);
-    sceneOffset.y = lerp(sceneOffset.y, sceneOffsetTarget.y, 0.06);
-    world.position.x = sceneOffset.x;
-    world.position.y = sceneOffset.y;
+    function setupScene() {
+        camera = new THREE.OrthographicCamera(0, 0, window.innerWidth, window.innerHeight, -10000, 10000);
+        camera.position.z = 2.5;
 
-    // animate slightly
-    const t = nowSeconds();
-    objects.forEach((o, i) => {
-      o.group.rotation.y = Math.sin(t * 0.35 + i) * 0.06;
-      o.group.position.y += Math.sin(t * 0.6 + i) * 0.0008;
-    });
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a1a);
+        scene.add(camera);
 
-    controls.update();
+        renderer = new THREE.WebGLRenderer({ 
+            antialias: true, 
+            depthBuffer: true,
+            alpha: true
+        });
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setClearColor(0x000000, 0);
+        
+        world = new THREE.Object3D();
+        scene.add(world);
 
-    // prefer composer if available, otherwise raw render
-    if (composer && typeof composer.render === 'function') {
-      composer.render();
-    } else {
-      renderer.render(scene, camera);
+        renderer.domElement.setAttribute("id", "scene");
+        document.body.appendChild(renderer.domElement);
+        
+        // Enhanced lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+        scene.add(ambientLight);
     }
-  } catch (e) {
-    console.error('[main] runtime loop error (continuing):', e);
-  }
-}
 
-/* ========== Resize handling ========== */
-function onResize() {
-  try {
-    const w = window.innerWidth, h = window.innerHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-    if (composer && typeof composer.setSize === 'function') composer.setSize(w, h);
-  } catch (e) {
-    console.warn('[main] onResize error:', e);
-  }
+    function setupWindowManager() {
+        windowManager = new WindowManager();
+        windowManager.setWinShapeChangeCallback(updateWindowShape);
+        windowManager.setWinChangeCallback(windowsUpdated);
+
+        let metaData = {type: "nebula", creationTime: Date.now()};
+        windowManager.init(metaData);
+        windowsUpdated();
+    }
+
+    function windowsUpdated() {
+        updateNebulaBalls();
+        createConnections();
+    }
+
+    function createNebulaBall(win, index) {
+        const radius = 80 + index * 20;
+        const geometry = new THREE.SphereGeometry(radius, 32, 32);
+        
+        // Create vibrant colors with HSL
+        const mainColor = new THREE.Color().setHSL(index * 0.15, 0.9, 0.6);
+        const secondaryColor = new THREE.Color().setHSL(index * 0.15 + 0.3, 0.8, 0.7);
+
+        const material = new THREE.MeshBasicMaterial({
+            color: mainColor,
+            transparent: true,
+            opacity: 0.8,
+            wireframe: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        const nebulaBall = new THREE.Mesh(geometry, material);
+        nebulaBall.position.set(
+            win.shape.x + win.shape.w * 0.5,
+            win.shape.y + win.shape.h * 0.5,
+            0
+        );
+
+        nebulaBall.userData = {
+            originalRadius: radius,
+            pulseSpeed: 0.5 + Math.random() * 0.5,
+            rotationSpeed: 0.2 + Math.random() * 0.3,
+            mainColor: mainColor,
+            secondaryColor: secondaryColor
+        };
+
+        // Create glowing aura
+        createAura(nebulaBall, index);
+        // Create orbiting particles
+        createParticles(nebulaBall, index);
+        
+        return nebulaBall;
+    }
+
+    function createAura(nebulaBall, index) {
+        const auraGeometry = new THREE.SphereGeometry(nebulaBall.userData.originalRadius * 1.3, 16, 16);
+        const auraMaterial = new THREE.MeshBasicMaterial({
+            color: nebulaBall.userData.secondaryColor,
+            transparent: true,
+            opacity: 0.3,
+            wireframe: true,
+            blending: THREE.AdditiveBlending
+        });
+
+        const aura = new THREE.Mesh(auraGeometry, auraMaterial);
+        nebulaBall.add(aura);
+    }
+
+    function createParticles(nebulaBall, index) {
+        const particleCount = 100;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        
+        const radius = nebulaBall.userData.originalRadius;
+
+        for (let i = 0; i < particleCount; i++) {
+            const i3 = i * 3;
+            
+            // Create particles in a spherical distribution
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(Math.random() * 2 - 1);
+            const r = radius * (1.1 + Math.random() * 0.5);
+            
+            positions[i3] = Math.sin(phi) * Math.cos(theta) * r;
+            positions[i3 + 1] = Math.sin(phi) * Math.sin(theta) * r;
+            positions[i3 + 2] = Math.cos(phi) * r;
+            
+            // Color variation
+            const colorVar = new THREE.Color().setHSL(
+                index * 0.15 + Math.random() * 0.1, 
+                0.9, 
+                0.7 + Math.random() * 0.2
+            );
+            
+            colors[i3] = colorVar.r;
+            colors[i3 + 1] = colorVar.g;
+            colors[i3 + 2] = colorVar.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 3,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.7,
+            blending: THREE.AdditiveBlending
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        nebulaBall.add(particleSystem);
+        particleSystems.push(particleSystem);
+    }
+
+    function createConnections() {
+        // Remove old connections
+        connectionLines.forEach(line => world.remove(line));
+        connectionLines = [];
+
+        const wins = windowManager.getWindows();
+        if (wins.length < 2) return;
+        
+        // Create connections between all windows (not just nearby ones)
+        for (let i = 0; i < wins.length; i++) {
+            for (let j = i + 1; j < wins.length; j++) {
+                createEnergyConnection(wins[i], wins[j], i, j);
+            }
+        }
+    }
+
+    function createEnergyConnection(win1, win2, index1, index2) {
+        const points = [];
+        const numPoints = 10; // Reduced for simplicity
+        
+        const startX = win1.shape.x + win1.shape.w * 0.5;
+        const startY = win1.shape.y + win1.shape.h * 0.5;
+        const endX = win2.shape.x + win2.shape.w * 0.5;
+        const endY = win2.shape.y + win2.shape.h * 0.5;
+
+        // Create a straight line with slight curve
+        for (let i = 0; i <= numPoints; i++) {
+            const t = i / numPoints;
+            const x = startX + (endX - startX) * t;
+            const y = startY + (endY - startY) * t;
+            // Add slight wave effect
+            const wave = Math.sin(t * Math.PI) * 20;
+            points.push(new THREE.Vector3(x, y + wave, 0));
+        }
+        
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        
+        // Create a vibrant connection color
+        const connectionColor = new THREE.Color().setHSL(
+            (index1 * 0.15 + index2 * 0.15) * 0.5, 
+            0.9, 
+            0.7
+        );
+
+        const material = new THREE.LineBasicMaterial({
+            color: connectionColor,
+            transparent: true,
+            opacity: 0.6,
+            linewidth: 2
+        });
+        
+        const connection = new THREE.Line(geometry, material);
+        world.add(connection);
+        connectionLines.push(connection);
+        
+        // Also create a glowing effect line
+        const glowMaterial = new THREE.LineBasicMaterial({
+            color: connectionColor,
+            transparent: true,
+            opacity: 0.3,
+            linewidth: 4
+        });
+        
+        const glowConnection = new THREE.Line(geometry.clone(), glowMaterial);
+        world.add(glowConnection);
+        connectionLines.push(glowConnection);
+    }
+
+    function updateNebulaBalls() {
+        const wins = windowManager.getWindows();
+
+        // Remove all existing nebula balls
+        nebulaBalls.forEach(ball => {
+            // Remove all children first
+            while(ball.children.length > 0) {
+                ball.remove(ball.children[0]);
+            }
+            world.remove(ball);
+        });
+        nebulaBalls = [];
+        particleSystems = [];
+
+        // Create new nebula balls
+        wins.forEach((win, index) => {
+            const nebulaBall = createNebulaBall(win, index);
+            world.add(nebulaBall);
+            nebulaBalls.push(nebulaBall);
+        });
+    }
+
+    function onMouseMove(event) {
+        // Convert mouse position to scene coordinates
+        mousePosition.x = event.clientX;
+        mousePosition.y = event.clientY;
+    }
+
+    function onMouseClick(event) {
+        // Create a gravity point at mouse position (relative to scene)
+        const gravityPoint = {
+            x: event.clientX - window.screenX + sceneOffset.x,
+            y: event.clientY - window.screenY + sceneOffset.y,
+            strength: 500,
+            life: 3.0,
+            creationTime: getTime()
+        };
+        gravityPoints.push(gravityPoint);
+        
+        // Visual effect for click
+        createClickEffect(event.clientX, event.clientY);
+    }
+
+    function createClickEffect(x, y) {
+        // Create a ripple effect at click position
+        const rippleGeometry = new THREE.RingGeometry(5, 10, 32);
+        const rippleMaterial = new THREE.MeshBasicMaterial({
+            color: 0x4fffff,
+            transparent: true,
+            opacity: 0.7,
+            side: THREE.DoubleSide
+        });
+        
+        const ripple = new THREE.Mesh(rippleGeometry, rippleMaterial);
+        ripple.position.set(x - window.screenX + sceneOffset.x, y - window.screenY + sceneOffset.y, 0);
+        world.add(ripple);
+        
+        // Animate and remove the ripple
+        let scale = 1;
+        const animateRipple = () => {
+            scale += 0.1;
+            ripple.scale.set(scale, scale, 1);
+            rippleMaterial.opacity -= 0.05;
+            
+            if (rippleMaterial.opacity > 0) {
+                requestAnimationFrame(animateRipple);
+            } else {
+                world.remove(ripple);
+            }
+        };
+        animateRipple();
+    }
+
+    function updateWindowShape(easing = true) {
+        sceneOffsetTarget = {x: -window.screenX, y: -window.screenY};
+        if (!easing) sceneOffset = sceneOffsetTarget;
+    }
+
+    function render() {
+        const currentTime = getTime();
+        timeUniform.value = currentTime;
+
+        windowManager.update();
+
+        // Smooth scene transition
+        const falloff = 0.08; // Increased for more responsiveness
+        sceneOffset.x += (sceneOffsetTarget.x - sceneOffset.x) * falloff;
+        sceneOffset.y += (sceneOffsetTarget.y - sceneOffset.y) * falloff;
+        world.position.set(sceneOffset.x, sceneOffset.y, 0);
+
+        const wins = windowManager.getWindows();
+
+        // Update gravity points (remove expired ones)
+        gravityPoints = gravityPoints.filter(point => {
+            point.life -= 0.016;
+            return point.life > 0;
+        });
+
+        // Update nebula balls with interactive effects
+        nebulaBalls.forEach((ball, index) => {
+            if (index >= wins.length) return;
+
+            const win = wins[index];
+            const ballTime = currentTime * ball.userData.pulseSpeed;
+            
+            // Target position
+            let targetX = win.shape.x + win.shape.w * 0.5;
+            let targetY = win.shape.y + win.shape.h * 0.5;
+
+            // Apply gravity points influence for interactive attraction
+            gravityPoints.forEach(point => {
+                const dx = targetX - point.x;
+                const dy = targetY - point.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < 300) { // Only affect if close enough
+                    const force = point.strength * point.life / (distance + 50);
+                    targetX -= dx * force * 0.0005;
+                    targetY -= dy * force * 0.0005;
+                }
+            });
+
+            // Smooth movement towards target
+            ball.position.x += (targetX - ball.position.x) * falloff;
+            ball.position.y += (targetY - ball.position.y) * falloff;
+
+            // Pulsating scale animation
+            const pulse = Math.sin(ballTime * 2) * 0.1 + 1;
+            ball.scale.set(pulse, pulse, pulse);
+
+            // Rotation animation
+            ball.rotation.x = ballTime * ball.userData.rotationSpeed;
+            ball.rotation.y = ballTime * ball.userData.rotationSpeed * 0.7;
+
+            // Rotate particles
+            if (ball.children.length > 1) {
+                const particles = ball.children[1];
+                particles.rotation.y += 0.01;
+                particles.rotation.x += 0.005;
+            }
+
+            // Pulsate aura
+            if (ball.children.length > 0) {
+                const aura = ball.children[0];
+                aura.rotation.y += 0.02;
+                const auraPulse = Math.sin(ballTime * 3) * 0.2 + 1;
+                aura.scale.set(auraPulse, auraPulse, auraPulse);
+            }
+        });
+
+        // Update connection lines to follow current positions
+        updateConnectionLines();
+
+        renderer.render(scene, camera);
+        requestAnimationFrame(render);
+    }
+
+    function updateConnectionLines() {
+        const wins = windowManager.getWindows();
+        let connectionIndex = 0;
+
+        for (let i = 0; i < wins.length; i++) {
+            for (let j = i + 1; j < wins.length; j++) {
+                if (connectionIndex >= connectionLines.length) break;
+
+                const win1 = wins[i];
+                const win2 = wins[j];
+                
+                const startX = win1.shape.x + win1.shape.w * 0.5;
+                const startY = win1.shape.y + win1.shape.h * 0.5;
+                const endX = win2.shape.x + win2.shape.w * 0.5;
+                const endY = win2.shape.y + win2.shape.h * 0.5;
+
+                // Calculate distance for dynamic effects
+                const distance = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
+                const maxDistance = 1500; // Maximum distance for full visibility
+                
+                // Update the main line
+                const points = [];
+                const numPoints = 10;
+                
+                for (let k = 0; k <= numPoints; k++) {
+                    const t = k / numPoints;
+                    const x = startX + (endX - startX) * t;
+                    const y = startY + (endY - startY) * t;
+                    const wave = Math.sin(t * Math.PI + getTime() * 2) * (20 * (1 - distance/maxDistance));
+                    points.push(new THREE.Vector3(x, y + wave, 0));
+                }
+                
+                connectionLines[connectionIndex].geometry.setFromPoints(points);
+                
+                // Dynamic opacity based on distance
+                const opacity = Math.max(0.1, 0.6 * (1 - distance/maxDistance));
+                connectionLines[connectionIndex].material.opacity = opacity;
+                
+                connectionIndex++;
+                
+                // Update the glow line (if it exists)
+                if (connectionIndex < connectionLines.length) {
+                    connectionLines[connectionIndex].geometry.setFromPoints(points);
+                    connectionLines[connectionIndex].material.opacity = opacity * 0.5;
+                    connectionIndex++;
+                }
+            }
+        }
+    }
+
+    function resize() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        
+        camera = new THREE.OrthographicCamera(0, width, 0, height, -10000, 10000);
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height);
+    }
 }

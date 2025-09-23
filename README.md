@@ -10,6 +10,12 @@ This project demonstrates a 3D scene rendered with Three.js that is synchronized
 - Smooth animated transitions for window movements and resizing.
 - An object in the 3D scene corresponding to each open window.
 
+## Screen Shots
+
+![alt text](image.png)
+![alt text](image-1.png)
+![alt text](image-2.png)
+
 ## Installation
 
 No installation is required. Simply clone the repository and open the `index.html` file in a web browser.
@@ -59,6 +65,8 @@ This script handles the Three.js scene setup and rendering.
 
 - `index.html`: The main HTML file that contains the canvas for the Three.js renderer.
 - `main.js`: Sets up the Three.js scene, manages rendering, and integrates with the `WindowManager`.
+- `main2.js`: Alternative version that sets up the Three.js scene, manages rendering, and integrates with the `WindowManager`.
+- `main3.js`: Alternative version that sets up the Three.js scene, manages rendering, and integrates with the `WindowManager`.
 - `WindowManager.js`: A class for managing and synchronizing the state of multiple browser windows using `localStorage`.
 
 ## License

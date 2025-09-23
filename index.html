@@ -1,34 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>multipleWindow3dScene (modern)</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <style>
-      html,
-      body {
-        height: 100%;
+    <title>Cosmic Nebula Balls - Advanced MultiWindow Experience</title>
+    <style type="text/css">
+      * {
         margin: 0;
-        background: #000;
+        padding: 0;
       }
-      canvas {
-        display: block;
+
+      body {
+        background: radial-gradient(circle at center, #0a0a1a 0%, #000000 100%);
+        overflow: hidden;
+        font-family: "Arial", sans-serif;
+      }
+
+      #scene {
+        position: fixed;
+        top: 0;
+        left: 0;
         width: 100%;
         height: 100%;
+        cursor: crosshair;
+      }
+
+      .ui-overlay {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        color: white;
+        z-index: 1000;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 15px;
+        border-radius: 10px;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .title {
+        font-size: 24px;
+        margin-bottom: 10px;
+        background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d1);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: bold;
+      }
+
+      .instructions {
+        font-size: 14px;
+        opacity: 0.8;
+        margin-top: 10px;
+      }
+
+      .stats {
+        position: absolute;
+        bottom: 20px;
+        right: 20px;
+        color: white;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 12px;
       }
     </style>
-
-    <!-- Import map: maps bare specifiers to CDN module URLs -->
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://unpkg.com/three@0.180.0/build/three.module.js",
-          "three/": "https://unpkg.com/three@0.180.0/"
-        }
-      }
-    </script>
   </head>
   <body>
-    <script type="module" src="./main.js"></script>
+    <div class="ui-overlay">
+      <div class="title">🌌 COSMIC NEBULA BALLS</div>
+      <div>• Move windows to see cosmic connections</div>
+      <div>• Click to create gravity wells</div>
+      <div class="instructions">
+        Open multiple windows for the full experience
+      </div>
+    </div>
+
+    <div class="stats" id="stats">Windows: 1 | Particles: 0</div>
+
+    <script type="module" src="main2.js"></script>
   </body>
 </html>

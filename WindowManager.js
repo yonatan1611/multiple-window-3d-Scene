@@ -59,6 +59,25 @@ class WindowManager
 		}
 	}
 
+	// Add this method to your existing WindowManager class
+getNearbyWindows(threshold = 800) {
+    const currentWindow = this.getThisWindowData();
+    const nearby = [];
+    
+    this.#windows.forEach(win => {
+        if (win.id !== this.#id) {
+            const distance = Math.sqrt(
+                Math.pow(win.shape.x - currentWindow.shape.x, 2) + 
+                Math.pow(win.shape.y - currentWindow.shape.y, 2)
+            );
+            if (distance < threshold) {
+                nearby.push(win);
+            }
+        }
+    });
+    
+    return nearby;
+}
 	// initiate current window (add metadata for custom data to store with each window instance)
 	init (metaData)
 	{
