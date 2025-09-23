@@ -29,7 +29,7 @@ Then, open `index.html` in your browser.
 
 ## Usage
 
-Open `index.html` in your browser. To see the multi-window effect, open the same `index.html` file in several new browser windows and arrange them on your screen. A new cube will appear in the 3D scene for each window you open. Moving or resizing any window will update the scene in all other windows in real-time.
+Open `index.html` in your browser. To see the multi-window effect, open the same `index.html` file in several new browser windows and arrange them on your screen. A new nebula ball/blob will appear in the 3D scene for each window you open. Moving or resizing any window will update the scene in all other windows in real-time.
 
 To reset the window state stored in `localStorage`, you can append a query parameter to the URL:
 `file:///path/to/your/clone/index.html?clear=true`
